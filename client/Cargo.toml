@@ -14,3 +14,4 @@ workspace = true
 
 [dependencies]
 rally-point-proto = { workspace = true }
+rally-point-transport = { workspace = true }
