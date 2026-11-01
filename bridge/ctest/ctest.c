@@ -62,9 +62,19 @@ int main(int argc, char **argv) {
     fflush(stdout);
     rp_game_started(session);
 
-    /* A fake SC turn: keep-alive 0x05 (1 byte) + a 0x0C build command
-     * (8 bytes per the command table). */
-    static const uint8_t turn[9] = {0x05, 0x0C, 1, 2, 3, 4, 5, 6, 7};
+    /* A turn mixing classic and Hyperion-wide commands, all of which the relay
+     * must now validate: 0x05 keep-alive (1), 0x38 pause (1), 0x39 resume (1),
+     * 0x0C build (8), 0x89 wide select of 2 units (2 + 4*2), 0x8C selection
+     * chunk of 2 units (3 + 4*2), 0x94 wide right-click (12). */
+    static const uint8_t turn[44] = {
+        0x05,
+        0x38,
+        0x39,
+        0x0C, 1, 2, 3, 4, 5, 6, 7,
+        0x89, 2, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+        0x8C, 2, 0x09, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+        0x94, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0,
+    };
     uint8_t events[4096];
     uint32_t received = 0;
 

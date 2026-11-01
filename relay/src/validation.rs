@@ -184,6 +184,12 @@ pub fn validate_turn(slot: SlotId, mut payload: Payload) -> Result<ValidatedTurn
                     .ok_or(ValidationError::Truncated { offset, opcode })?;
                 2 + usize::from(stride) * usize::from(count)
             }
+            Some(CommandLength::Variable3 { stride }) => {
+                let count = *rest
+                    .get(1)
+                    .ok_or(ValidationError::Truncated { offset, opcode })?;
+                3 + usize::from(stride) * usize::from(count)
+            }
         };
 
         let command = rest
@@ -660,6 +666,15 @@ mod tests {
                         let count = rng.below(5) as u8;
                         commands.push(opcode);
                         commands.push(count);
+                        for _ in 0..(usize::from(stride) * usize::from(count)) {
+                            commands.push(rng.byte());
+                        }
+                    }
+                    Some(CommandLength::Variable3 { stride }) => {
+                        let count = rng.below(5) as u8;
+                        commands.push(opcode);
+                        commands.push(count);
+                        commands.push(rng.byte());
                         for _ in 0..(usize::from(stride) * usize::from(count)) {
                             commands.push(rng.byte());
                         }
