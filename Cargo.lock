@@ -2702,8 +2702,10 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "hex",
  "rally-point-client",
  "rally-point-transport",
+ "ring",
  "serde",
  "serde_json",
  "tokio",
