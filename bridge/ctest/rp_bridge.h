@@ -36,6 +36,7 @@ typedef struct rp_session rp_session;
 #define RP_EV_BUFFER 2 /* u8, u32 buffer_turns */
 #define RP_EV_LEAVE 3  /* u8, u32 slot, u32 reason */
 #define RP_EV_LOBBY 4  /* u8, u32 slot, u32 len, len bytes */
+#define RP_EV_CHAT 5   /* u8, u32 slot, u32 len, len bytes */
 
 /* Starts a session from the launch JSON; writes *out. Returns 0 on success. */
 int32_t rp_start(const char *setup_json, rp_session **out);
@@ -62,6 +63,9 @@ void rp_result_expected(rp_session *session);
 void rp_send_result(rp_session *session, const uint8_t *data, size_t len);
 void rp_leave_intent(rp_session *session);
 void rp_game_started(rp_session *session);
+
+/* In-game chat, best-effort (never correctness-critical). */
+int32_t rp_chat_send(rp_session *session, const uint8_t *data, size_t len);
 
 /* Teardown (idempotent). */
 void rp_end(rp_session *session);
