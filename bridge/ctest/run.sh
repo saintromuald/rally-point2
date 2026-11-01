@@ -25,9 +25,10 @@ echo "[run] generating relay cert and tenant key"
 TENANT_PKCS8="$(sed -n '1p' "$WORK/tenant.txt")"
 TENANT_PUB="$(sed -n '2p' "$WORK/tenant.txt")"
 
-echo "[run] starting relay on 127.0.0.1:14005"
+PORT=$((15000 + RANDOM % 1000))
+echo "[run] starting relay on 127.0.0.1:$PORT"
 "$BIN/rally-point-relay" \
-    --listen 127.0.0.1:14005 \
+    --listen "127.0.0.1:$PORT" \
     --cert "$WORK/cert.pem" --key "$WORK/key.pem" \
     --tenant-pubkey "$TENANT_PUB" --kid dev-key-1 --tenant hyperion-dev \
     > "$WORK/relay.log" 2>&1 &
@@ -37,11 +38,11 @@ sleep 1
 echo "[run] minting setups for slot 0 and slot 1"
 "$BIN/rp_dev_setup" setup \
     --tenant-pkcs8 "$TENANT_PKCS8" --kid dev-key-1 --tenant hyperion-dev \
-    --session 1 --slot 0 --relay 127.0.0.1:14005 --server-name localhost \
+    --session 1 --slot 0 --relay "127.0.0.1:$PORT" --server-name localhost \
     --cert-file "$WORK/cert.pem" --out "$WORK/s0.json"
 "$BIN/rp_dev_setup" setup \
     --tenant-pkcs8 "$TENANT_PKCS8" --kid dev-key-1 --tenant hyperion-dev \
-    --session 1 --slot 1 --relay 127.0.0.1:14005 --server-name localhost \
+    --session 1 --slot 1 --relay "127.0.0.1:$PORT" --server-name localhost \
     --cert-file "$WORK/cert.pem" --out "$WORK/s1.json"
 
 echo "[run] building ctest against the staticlib"
