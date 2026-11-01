@@ -71,6 +71,10 @@ int32_t rp_chat_send(rp_session *session, const uint8_t *data, size_t len);
  * late joiners; peers receive it as an RP_EV_LOBBY event. */
 int32_t rp_lobby_send(rp_session *session, const uint8_t *data, size_t len);
 
+/* A manual drop request for a disconnected slot; the confirmation is the
+ * RP_EV_LEAVE event for that slot. */
+int32_t rp_request_drop(rp_session *session, uint32_t slot);
+
 /* Teardown (idempotent). */
 void rp_end(rp_session *session);
 
