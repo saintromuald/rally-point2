@@ -67,6 +67,10 @@ void rp_game_started(rp_session *session);
 /* In-game chat, best-effort (never correctness-critical). */
 int32_t rp_chat_send(rp_session *session, const uint8_t *data, size_t len);
 
+/* A pre-game lobby command (init data, setup): reliable, relay-replayed to
+ * late joiners; peers receive it as an RP_EV_LOBBY event. */
+int32_t rp_lobby_send(rp_session *session, const uint8_t *data, size_t len);
+
 /* Teardown (idempotent). */
 void rp_end(rp_session *session);
 
