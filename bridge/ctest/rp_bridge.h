@@ -90,3 +90,10 @@ uint32_t rp_bridge_version(void);
 #endif
 
 #endif /* RP_BRIDGE_H */
+
+/* Dev-only helper: mint a session through a coordinator's control API, signed
+ * with the tenant's app-server client seed (hex). Blocking, launch-time only.
+ * Writes the per-slot setup JSONs as one JSON array string into out. */
+int32_t rp_dev_mint(const char *coordinator, const char *tenant, const char *kid,
+                    const char *client_seed_hex, uint32_t slots, const char *game_name,
+                    char *out, size_t out_cap);
