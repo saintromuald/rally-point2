@@ -152,8 +152,180 @@ fn main() -> ExitCode {
             println!("{}", hex::encode(pkcs8.as_ref()));
             println!("{}", hex::encode(pair2.public_key().as_ref()));
         }
-        "setup" => {
-            let mut tenant_pkcs8: Option<String> = None;
+        "coord-create" => {
+            // The coordinated dev flow: ask a dev-tenant coordinator to mint a
+            // session on its enrolled relay, then write each slot's launch JSON.
+            //
+            //   rp_dev_setup coord-create --coordinator http://127.0.0.1:14910 \
+            //       --tenant <id> --kid <kid> --client-seed <hex> \
+            //       --slots <n> [--server-name localhost] --out-dir <dir>
+            let mut coordinator: Option<String> = None;
+            let mut tenant = "sb-dev".to_string();
+            let mut kid = "dev-key-1".to_string();
+            let mut client_seed: Option<String> = None;
+            let mut slots: u32 = 2;
+            let mut server_name = "localhost".to_string();
+            let mut out_dir: Option<String> = None;
+            let mut game_name = "Relay".to_string();
+            while let Some(a) = args.next() {
+                match a.as_str() {
+                    "--coordinator" => {
+                        coordinator = Some(next_arg(&mut args, "--coordinator").unwrap())
+                    }
+                    "--tenant" => tenant = next_arg(&mut args, "--tenant").unwrap(),
+                    "--kid" => kid = next_arg(&mut args, "--kid").unwrap(),
+                    "--client-seed" => {
+                        client_seed = Some(next_arg(&mut args, "--client-seed").unwrap())
+                    }
+                    "--slots" => slots = next_arg(&mut args, "--slots").unwrap().parse().unwrap(),
+                    "--server-name" => {
+                        server_name = next_arg(&mut args, "--server-name").unwrap()
+                    }
+                    "--name" => game_name = next_arg(&mut args, "--name").unwrap(),
+                    "--out-dir" => out_dir = Some(next_arg(&mut args, "--out-dir").unwrap()),
+                    other => {
+                        eprintln!("unknown flag {other}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            let (coordinator, out_dir) = match (coordinator, out_dir) {
+                (Some(c), Some(o)) => (c, o),
+                _ => {
+                    eprintln!("coord-create needs --coordinator and --out-dir");
+                    return ExitCode::FAILURE;
+                }
+            };
+            std::fs::create_dir_all(&out_dir).expect("out dir");
+
+            // The tenant's app-server signing key: a raw 32-byte Ed25519 seed
+            // (the coordinator's --dev-tenant-client-key).
+            let seed = match &client_seed {
+                Some(h) => {
+                    let bytes = hex::decode(h).expect("client seed hex");
+                    let seed: [u8; 32] = bytes.try_into().expect("seed length");
+                    seed
+                }
+                None => {
+                    let mut seed = [0u8; 32];
+                    use ring::rand::SecureRandom;
+                    ring::rand::SystemRandom::new().fill(&mut seed).expect("rng");
+                    eprintln!("generated a client seed; pin it with --client-seed {}",
+                              hex::encode(seed));
+                    seed
+                }
+            };
+            let client_key = Ed25519KeyPair::from_seed_unchecked(&seed).expect("client key");
+
+            // One ephemeral per-slot keypair (kept as its PKCS#8 document, which
+            // the client handoff carries), whose public half rides the token.
+            let slot_docs: Vec<Vec<u8>> = (0..slots)
+                .map(|_| {
+                    Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
+                        .expect("keygen")
+                        .as_ref()
+                        .to_vec()
+                })
+                .collect();
+            let slot_keys: Vec<Ed25519KeyPair> = slot_docs
+                .iter()
+                .map(|d| Ed25519KeyPair::from_pkcs8(d).expect("pkcs8 round trip"))
+                .collect();
+            let players = slot_keys
+                .iter()
+                .enumerate()
+                .map(|(i, k)| {
+                    let pubkey: [u8; PUBLIC_KEY_LEN] =
+                        k.public_key().as_ref().try_into().unwrap();
+                    rally_point_client::proto::control::PlayerHandoff {
+                        require_evidence: false,
+                        slot: SlotId(i as u8),
+                        client_pubkey: ClientPublicKey(pubkey),
+                        external_ref: None,
+                        observer: false,
+                        region: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let request = rally_point_client::proto::control::SessionRequest {
+                periodic_evidence: false,
+                evidence_keys: vec![],
+                tenant: TenantId(tenant.clone()),
+                players,
+                external_id: Some(format!("dev-{}", std::process::id())),
+                latency_estimate_ms: None,
+                rollback: false,
+                lobby_policy: None,
+            };
+            let body = serde_json::to_vec(&request).expect("request json");
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_secs()
+                .to_string();
+            let message = rally_point_client::proto::request_auth::request_message(
+                &ts, "POST", "/session/create", &body,
+            );
+            let signature = client_key.sign(&message);
+            let sig_hex = hex::encode(signature.as_ref());
+
+            // Plain HTTP for the dev coordinator.
+            let url = format!("{coordinator}/session/create");
+            let mut stream = std::net::TcpStream::connect(
+                url.strip_prefix("http://").expect("http coordinator url")
+                    .split('/')
+                    .next()
+                    .expect("host:port"),
+            )
+            .expect("coordinator connection");
+            use std::io::Write;
+            write!(
+                stream,
+                "POST /session/create HTTP/1.1\r\nHost: dev\r\nContent-Type: application/json\r\nContent-Length: {}\r\nx-rp2-timestamp: {}\r\nx-rp2-signature: {}\r\nConnection: close\r\n\r\n",
+                body.len(),
+                ts,
+                sig_hex
+            )
+            .expect("request");
+            stream.write_all(&body).expect("request body");
+            use std::io::Read;
+            let mut raw = Vec::new();
+            stream.read_to_end(&mut raw).expect("response");
+            let text = String::from_utf8_lossy(&raw);
+            let json = text
+                .split("\r\n\r\n")
+                .nth(1)
+                .expect("http response body");
+            let response: rally_point_client::proto::control::SessionResponse =
+                serde_json::from_str(json).expect("session response");
+
+            let addrs: Vec<String> = std::iter::once(response.home_relay.relay_addr.to_string())
+                .chain(response.home_relay.relay_addrs.iter().map(|a| a.to_string()))
+                .collect();
+            let cert_b64 = BASE64_STANDARD.encode(&response.home_relay.cert_der);
+            let mut outs = Vec::new();
+            for (i, token) in response.tokens.iter().enumerate() {
+                let setup = json!({
+                    "token": BASE64_STANDARD.encode(&token.token),
+                    "clientPrivateKey": BASE64_STANDARD.encode(&slot_docs[i]),
+                    "homeRelay": {
+                        "relayId": response.home_relay.relay_id.0,
+                        "addrs": addrs,
+                        "serverName": server_name,
+                        "cert": cert_b64,
+                    },
+                    "initialBufferTurns": response.bounds.min,
+                    "rosterSize": slots,
+                    "gameName": game_name,
+                });
+                let path = format!("{out_dir}/s{i}.json");
+                std::fs::write(&path, serde_json::to_string_pretty(&setup).unwrap())
+                    .expect("writing setup");
+                outs.push(path);
+            }
+            println!("coordinator minted session {}; wrote {}", response.session.0, outs.join(", "));
+        }
+        "setup" => {            let mut tenant_pkcs8: Option<String> = None;
             let mut kid = "dev-key-1".to_string();
             let mut tenant = "hyperion-dev".to_string();
             let mut session: u64 = 1;
