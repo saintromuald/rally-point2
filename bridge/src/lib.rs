@@ -701,6 +701,41 @@ pub unsafe extern "C" fn rp_chat_send(session: *mut RpSession, data: *const u8, 
     }));
 }
 
+/// A pre-game lobby command (the game's init data, slot/race setup, whatever
+/// the lobby exchanges): carried on the reliable control stream, stamped with
+/// the authoring slot by the relay, replayed to members that connect late, and
+/// delivered to the others as `EV_LOBBY` events from [`rp_poll`]. Returns 0
+/// when queued, [`RP_ERR_TURN_FULL`] when the driver's queue is full,
+/// [`RP_ERR_TURN_ENDED`] when the session has ended. Bounded by the relay's
+/// lobby caps (32-command burst, 256 KB logged per session).
+///
+/// # Safety
+/// `data` must be readable for `len` bytes for the call's duration.
+#[no_mangle]
+pub unsafe extern "C" fn rp_lobby_send(session: *mut RpSession, data: *const u8, len: usize) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(s) = (unsafe { session.as_ref() }) else {
+            return RP_ERR_TURN_ENDED;
+        };
+        if data.is_null() || len > 256 * 1024 {
+            return RP_ERR_SETUP;
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
+        let Ok(guard) = s.state.lock() else {
+            return RP_ERR_TURN_ENDED;
+        };
+        match &guard.channels {
+            None => RP_ERR_TURN_ENDED,
+            Some(ch) => match ch.lobby_out.try_send(bytes) {
+                Ok(()) => RP_OK,
+                Err(tmpsc::error::TrySendError::Full(_)) => RP_ERR_TURN_FULL,
+                Err(tmpsc::error::TrySendError::Closed(_)) => RP_ERR_TURN_ENDED,
+            },
+        }
+    }))
+    .unwrap_or(RP_ERR_PANIC)
+}
+
 // ---------------------------------------------------------------------------
 // Teardown
 // ---------------------------------------------------------------------------
