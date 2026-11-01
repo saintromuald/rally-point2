@@ -39,6 +39,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
+use rally_point_client::proto::ids::SlotId;
 use rally_point_client::proto::messages::Payload;
 use rally_point_client::{
     ClientEndpoint, DirectiveTracker, DriverError, LeaveTracker, LinkDriver, Reconnect,
@@ -754,6 +755,34 @@ pub extern "C" fn rp_end(session: *mut RpSession) {
             let _ = thread.join();
         }
     }));
+}
+
+/// A manual drop request: the game asks the relay's authority to decide a
+/// synced leave for a disconnected slot. The relay may refuse while the drop's
+/// unlock floor has not passed; the confirmation is the `EV_LEAVE` event for
+/// the slot. Returns 0 when queued, -1 when the session has ended.
+#[no_mangle]
+pub extern "C" fn rp_request_drop(session: *mut RpSession, slot: u32) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(s) = (unsafe { session.as_ref() }) else {
+            return RP_ERR_TURN_ENDED;
+        };
+        if slot > u32::from(u8::MAX) {
+            return RP_ERR_SETUP;
+        }
+        let Ok(guard) = s.state.lock() else {
+            return RP_ERR_TURN_ENDED;
+        };
+        match &guard.channels {
+            None => RP_ERR_TURN_ENDED,
+            Some(ch) => match ch.request_drop.try_send(SlotId(slot as u8)) {
+                Ok(()) => RP_OK,
+                Err(tmpsc::error::TrySendError::Full(_)) => RP_ERR_TURN_FULL,
+                Err(tmpsc::error::TrySendError::Closed(_)) => RP_ERR_TURN_ENDED,
+            },
+        }
+    }))
+    .unwrap_or(RP_ERR_PANIC)
 }
 
 /// The bridge's own version, for the game's log lines.
