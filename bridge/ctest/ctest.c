@@ -62,12 +62,28 @@ int main(int argc, char **argv) {
     fflush(stdout);
     rp_game_started(session);
 
-    /* A turn mixing classic and Hyperion-wide commands, all of which the relay
-     * must now validate: 0x05 keep-alive (1), 0x38 pause (1), 0x39 resume (1),
+    /* A turn mixing the pre-game lobby commands and Hyperion-wide commands the
+     * relay must validate: 0x05 keep-alive (1), 0x3C StartGame (1), 0x3D
+     * download progress (2), 0x3E modify slot (6), 0x3F version (8), 0x40
+     * version verify (18), 0x41 change race (3), 0x42 change team (2), 0x44
+     * change slot (3), 0x45 swap slots (3), 0x48 seed init (13), 0x54 end
+     * briefing (1), 0x5B make public (1), then 0x38 pause (1), 0x39 resume (1),
      * 0x0C build (8), 0x89 wide select of 2 units (2 + 4*2), 0x8C selection
      * chunk of 2 units (3 + 4*2), 0x94 wide right-click (12). */
-    static const uint8_t turn[44] = {
+    static const uint8_t turn[105] = {
         0x05,
+        0x3C,
+        0x3D, 0,
+        0x3E, 0, 0, 0, 0, 0,
+        0x3F, 0, 0, 0, 0, 0, 0, 0,
+        0x40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0x41, 0, 0,
+        0x42, 0,
+        0x44, 0, 0,
+        0x45, 0, 0,
+        0x48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0x54,
+        0x5B,
         0x38,
         0x39,
         0x0C, 1, 2, 3, 4, 5, 6, 7,
