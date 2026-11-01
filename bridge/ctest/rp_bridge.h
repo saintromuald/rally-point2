@@ -37,6 +37,7 @@ typedef struct rp_session rp_session;
 #define RP_EV_LEAVE 3  /* u8, u32 slot, u32 reason */
 #define RP_EV_LOBBY 4  /* u8, u32 slot, u32 len, len bytes */
 #define RP_EV_CHAT 5   /* u8, u32 slot, u32 len, len bytes */
+#define RP_EV_CONNECT 6 /* u8, u32 slot, u8 connected (1 up, 0 down) */
 
 /* Starts a session from the launch JSON; writes *out. Returns 0 on success. */
 int32_t rp_start(const char *setup_json, rp_session **out);

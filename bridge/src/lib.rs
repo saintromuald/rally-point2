@@ -92,6 +92,7 @@ pub const EV_BUFFER: u8 = 2; // u8, u32 buffer_turns
 pub const EV_LEAVE: u8 = 3; //  u8, u32 slot, u32 reason
 pub const EV_LOBBY: u8 = 4; //  u8, u32 slot, u32 len, len bytes
 pub const EV_CHAT: u8 = 5; //  u8, u32 slot, u32 len, len bytes
+pub const EV_CONNECT: u8 = 6; // u8, u32 slot, u8 connected
 
 struct EvWriter<'a> {
     buf: &'a mut [u8],
@@ -585,8 +586,17 @@ pub unsafe extern "C" fn rp_poll(
                     Err(_) => break,
                 }
             }
+            loop {
+                match channels.connectivity.try_recv() {
+                    Ok((slot, up)) => {
+                        w.u8(EV_CONNECT);
+                        w.u32(u32::from(slot.0));
+                        w.u8(if up { 1 } else { 0 });
+                    }
+                    Err(_) => break,
+                }
+            }
             let _ = channels.skin_in.try_recv();
-            let _ = channels.connectivity.try_recv();
             let _ = channels.region_labels.try_recv();
         }
 

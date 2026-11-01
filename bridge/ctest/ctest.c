@@ -148,6 +148,14 @@ int main(int argc, char **argv) {
                     p += len;
                     printf("ctest: lobby command from slot %u (%u bytes)\n",
                            slot, len);
+                } else if (kind == RP_EV_CONNECT) {
+                    uint32_t slot;
+                    uint8_t up;
+                    read_u32(&p, end, &slot);
+                    if (p + 1 > end) { p = end; break; }
+                    up = *p++;
+                    printf("ctest: slot %u connectivity %s\n", slot,
+                           up ? "up" : "down");
                 } else {
                     fprintf(stderr, "ctest: unknown event kind %u\n", kind);
                     exit(3);
