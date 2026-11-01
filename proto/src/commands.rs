@@ -30,8 +30,12 @@ pub enum CommandLength {
     Fixed(u16),
     /// A count-prefixed command: the second byte is an entry count and the total
     /// length is `2 + stride * count` (opcode + count byte + `count` entries of
-    /// `stride` bytes each). Used by the six SC:R select opcodes.
+    /// `stride` bytes each). Used by the six SC:R select opcodes and Hyperion's
+    /// wide selects.
     Variable { stride: u16 },
+    /// A three-byte header (opcode, count byte, an operation byte), then
+    /// `stride * count` entry bytes. Hyperion's 0x8C selection chunk.
+    Variable3 { stride: u16 },
 }
 
 /// Fixed command lengths indexed by opcode, from the live `process_commands`
@@ -45,7 +49,7 @@ static FIXED_LEN: [u8; 0x68] = [
     /*0x00*/ 0,    0,    0,    0,    0,    1,    0,    0,    1,    0,    0,    0,    8,    3,    5,    2,
     /*0x10*/ 1,    1,    5,    3,   10,   11,    0,    0,    1,    1,    2,    1,    1,    1,    2,    3,
     /*0x20*/ 3,    2,    2,    3,    0,    2,    2,    1,    2,    3,    1,    2,    2,    2,    1,    5,
-    /*0x30*/ 2,    1,    2,    1,    1,    3,    1,    7,    0,    0,    0,    0,    0,    0,    0,    0,
+    /*0x30*/ 2,    1,    2,    1,    1,    3,    1,    7,    1,    1,    2,    2,    0,    0,    0,    0,
     /*0x40*/ 0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
     /*0x50*/ 0,    0,    0,    0,    0,    2,   10,    2,    5,    0,    1,    0,   82,    5,    0,    2,
     /*0x60*/ 12,  13,    5,    0,    0,    0,    4,    0,
@@ -59,6 +63,18 @@ pub fn classify(id: CommandId) -> Option<CommandLength> {
         0x09..=0x0B => Some(CommandLength::Variable { stride: 2 }),
         // SC:R extended select variants (4-byte unit ids).
         0x63..=0x65 => Some(CommandLength::Variable { stride: 4 }),
+        // Hyperion (the 1.17 source port) wide commands: wide selects with
+        // 4-byte unit ids, its selection chunk, and the wide-id orders. SC:R
+        // never sends them; Hyperion only sends them in a game past 1.17's
+        // ids, but every such command must pass the relay's bounds check.
+        0x89..=0x8B => Some(CommandLength::Variable { stride: 4 }),
+        0x8C => Some(CommandLength::Variable3 { stride: 4 }),
+        0x8D => Some(CommandLength::Fixed(9)),
+        0x94 => Some(CommandLength::Fixed(12)),
+        0x95 => Some(CommandLength::Fixed(13)),
+        0x96 => Some(CommandLength::Fixed(14)),
+        0x97 | 0x98 => Some(CommandLength::Fixed(3)),
+        0xA9 => Some(CommandLength::Fixed(5)),
         op => match FIXED_LEN.get(op as usize).copied().unwrap_or(0) {
             0 => None,
             n => Some(CommandLength::Fixed(u16::from(n))),
@@ -81,6 +97,10 @@ pub fn command_length(buf: &[u8]) -> Option<usize> {
         CommandLength::Variable { stride } => {
             let count = usize::from(*buf.get(1)?);
             Some(2 + usize::from(stride) * count)
+        }
+        CommandLength::Variable3 { stride } => {
+            let count = usize::from(*buf.get(1)?);
+            Some(3 + usize::from(stride) * count)
         }
     }
 }
