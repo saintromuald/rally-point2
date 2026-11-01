@@ -820,6 +820,190 @@ pub extern "C" fn rp_request_drop(session: *mut RpSession, slot: u32) -> i32 {
     .unwrap_or(RP_ERR_PANIC)
 }
 
+/// Dev-only helper: mint a session through a coordinator's control API
+/// (`POST /session/create`), signed with the tenant's app-server client seed
+/// (a 32-byte Ed25519 seed, hex). Blocking, launch-time only — the game loop
+/// must not call it. On success writes the per-slot setup JSONs as one JSON
+/// array string into `out` (NUL-terminated when it fits) and returns the
+/// byte count; negative on failure.
+///
+/// # Safety
+/// All pointers must be valid NUL-terminated C strings (or NULL for
+/// `game_name` and `server_name`); `out` must be writable for `out_cap` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rp_dev_mint(
+    coordinator: *const c_char,
+    tenant: *const c_char,
+    _kid: *const c_char,
+    client_seed_hex: *const c_char,
+    slots: u32,
+    game_name: *const c_char,
+    server_name: *const c_char,
+    out: *mut c_char,
+    out_cap: usize,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        use std::io::{Read, Write};
+        use std::net::TcpStream;
+
+        if coordinator.is_null() || tenant.is_null() || client_seed_hex.is_null()
+            || out.is_null() || out_cap == 0 || slots == 0 || slots > 16
+        {
+            return RP_ERR_SETUP;
+        }
+        let coordinator = CStr::from_ptr(coordinator).to_string_lossy().into_owned();
+        let tenant = CStr::from_ptr(tenant).to_string_lossy().into_owned();
+        let seed_hex = CStr::from_ptr(client_seed_hex).to_string_lossy().into_owned();
+        let name = if game_name.is_null() {
+            String::from("Relay")
+        } else {
+            CStr::from_ptr(game_name).to_string_lossy().into_owned()
+        };
+        let server_name = if server_name.is_null() {
+            String::from("localhost")
+        } else {
+            CStr::from_ptr(server_name).to_string_lossy().into_owned()
+        };
+        let bytes = match hex::decode(seed_hex.trim()) {
+            Ok(b) if b.len() == 32 => b,
+            _ => return RP_ERR_SETUP,
+        };
+        let seed: [u8; 32] = bytes.try_into().expect("length checked");
+        let client_key = match ring::signature::Ed25519KeyPair::from_seed_unchecked(&seed) {
+            Ok(k) => k,
+            Err(_) => return RP_ERR_SETUP,
+        };
+
+        // one ephemeral per-slot keypair, its PKCS#8 document handed to the client
+        let slot_docs: Vec<Vec<u8>> = (0..slots)
+            .map(|_| {
+                ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
+                    .map(|d| d.as_ref().to_vec())
+                    .unwrap_or_default()
+            })
+            .collect();
+        if slot_docs.iter().any(|d| d.is_empty()) {
+            return RP_ERR_SETUP;
+        }
+        let slot_keys: Vec<ring::signature::Ed25519KeyPair> = slot_docs
+            .iter()
+            .map(|d| ring::signature::Ed25519KeyPair::from_pkcs8(d).expect("pkcs8 round trip"))
+            .collect();
+        let players = slot_keys
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                use rally_point_client::proto::control::PlayerHandoff;
+                use rally_point_client::proto::ids::SlotId;
+                use rally_point_client::proto::token::ClientPublicKey;
+                use ring::signature::KeyPair;
+                let pubkey: [u8; 32] = KeyPair::public_key(k).as_ref().try_into().expect("ed25519 key");
+                PlayerHandoff {
+                    require_evidence: false,
+                    slot: SlotId(i as u8),
+                    client_pubkey: ClientPublicKey(pubkey),
+                    external_ref: None,
+                    observer: false,
+                    region: None,
+                }
+            })
+            .collect::<Vec<_>>();
+        let request = rally_point_client::proto::control::SessionRequest {
+            periodic_evidence: false,
+            evidence_keys: vec![],
+            tenant: rally_point_client::proto::control::TenantId(tenant.clone()),
+            players,
+            external_id: Some(format!("hyperion-room-{}", std::process::id())),
+            latency_estimate_ms: None,
+            rollback: false,
+            lobby_policy: None,
+        };
+        let body = match serde_json::to_vec(&request) {
+            Ok(b) => b,
+            Err(_) => return RP_ERR_SETUP,
+        };
+        let ts = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs().to_string(),
+            Err(_) => return RP_ERR_SETUP,
+        };
+        let message = rally_point_client::proto::request_auth::request_message(
+            &ts, "POST", "/session/create", &body,
+        );
+        let signature = client_key.sign(&message);
+        let sig_hex = hex::encode(signature.as_ref());
+
+        let url = format!("{coordinator}/session/create");
+        let hostport = match url.strip_prefix("http://") {
+            Some(hp) => hp.split('/').next().unwrap_or(""),
+            None => return RP_ERR_SETUP,
+        };
+        let mut stream = match TcpStream::connect(hostport) {
+            Ok(s) => s,
+            Err(_) => return RP_ERR_SETUP,
+        };
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+        let req = format!(
+            "POST /session/create HTTP/1.1\r\nHost: dev\r\nContent-Type: application/json\r\nContent-Length: {}\r\nx-rp2-timestamp: {}\r\nx-rp2-signature: {}\r\nConnection: close\r\n\r\n",
+            body.len(), ts, sig_hex
+        );
+        if stream.write_all(req.as_bytes()).is_err() {
+            return RP_ERR_SETUP;
+        }
+        if stream.write_all(&body).is_err() {
+            return RP_ERR_SETUP;
+        }
+        let mut raw = Vec::new();
+        if stream.read_to_end(&mut raw).is_err() {
+            return RP_ERR_SETUP;
+        }
+        let text = String::from_utf8_lossy(&raw);
+        let json = match text.split("\r\n\r\n").nth(1) {
+            Some(j) => j,
+            None => return RP_ERR_SETUP,
+        };
+        let response: rally_point_client::proto::control::SessionResponse =
+            match serde_json::from_str(json) {
+                Ok(r) => r,
+                Err(_) => return RP_ERR_SETUP,
+            };
+
+        use base64::Engine;
+        let addrs: Vec<String> = std::iter::once(response.home_relay.relay_addr.to_string())
+            .chain(response.home_relay.relay_addrs.iter().map(|a| a.to_string()))
+            .collect();
+        let cert_b64 = base64::engine::general_purpose::STANDARD.encode(&response.home_relay.cert_der);
+        let mut setups = Vec::new();
+        for (i, token) in response.tokens.iter().enumerate() {
+            let setup = serde_json::json!({
+                "token": base64::engine::general_purpose::STANDARD.encode(&token.token),
+                "clientPrivateKey": base64::engine::general_purpose::STANDARD.encode(&slot_docs[i]),
+                "homeRelay": {
+                    "relayId": response.home_relay.relay_id.0,
+                    "addrs": addrs,
+                    "serverName": server_name,
+                    "cert": cert_b64,
+                },
+                "initialBufferTurns": response.bounds.min,
+                "rosterSize": slots,
+                "gameName": name,
+            });
+            setups.push(serde_json::to_string(&setup).unwrap_or_default());
+        }
+        let arr = match serde_json::to_string(&setups) {
+            Ok(a) => a,
+            Err(_) => return RP_ERR_SETUP,
+        };
+        let bytes = arr.as_bytes();
+        if bytes.len() >= out_cap {
+            return RP_ERR_SETUP;
+        }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, bytes.len());
+        *out.add(bytes.len()) = 0;
+        bytes.len() as i32
+    }))
+    .unwrap_or(RP_ERR_PANIC)
+}
+
 /// The bridge's own version, for the game's log lines.
 #[no_mangle]
 pub extern "C" fn rp_bridge_version() -> u32 {
