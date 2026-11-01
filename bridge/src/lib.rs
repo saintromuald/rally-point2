@@ -90,6 +90,7 @@ pub const EV_TURN: u8 = 1; //  u8, u32 slot, u64 seq, u32 len, len bytes
 pub const EV_BUFFER: u8 = 2; // u8, u32 buffer_turns
 pub const EV_LEAVE: u8 = 3; //  u8, u32 slot, u32 reason
 pub const EV_LOBBY: u8 = 4; //  u8, u32 slot, u32 len, len bytes
+pub const EV_CHAT: u8 = 5; //  u8, u32 slot, u32 len, len bytes
 
 struct EvWriter<'a> {
     buf: &'a mut [u8],
@@ -572,7 +573,17 @@ pub unsafe extern "C" fn rp_poll(
             }
         }
         if let Some(channels) = guard.channels.as_mut() {
-            let _ = channels.chat_in.try_recv();
+            loop {
+                match channels.chat_in.try_recv() {
+                    Ok((slot, chat)) => {
+                        w.u8(EV_CHAT);
+                        w.u32(u32::from(slot.0));
+                        w.u32(chat.text.len() as u32);
+                        w.bytes(chat.text.as_bytes());
+                    }
+                    Err(_) => break,
+                }
+            }
             let _ = channels.skin_in.try_recv();
             let _ = channels.connectivity.try_recv();
             let _ = channels.region_labels.try_recv();
@@ -654,6 +665,37 @@ pub extern "C" fn rp_game_started(session: *mut RpSession) {
                 if let Some(ch) = &guard.channels {
                     let _ = ch.game_started.try_send(());
                 }
+            }
+        }
+    }));
+}
+
+/// In-game chat (best-effort, never correctness-critical): the relay stamps
+/// the authoring slot and fans it out; other members' lines arrive as
+/// `EV_CHAT` events from [`rp_poll`].
+///
+/// # Safety
+/// `data` must be readable for `len` bytes for the call's duration.
+#[no_mangle]
+pub unsafe extern "C" fn rp_chat_send(session: *mut RpSession, data: *const u8, len: usize) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let Some(s) = (unsafe { session.as_ref() }) else {
+            return;
+        };
+        if data.is_null() || len > 1024 * 1024 {
+            return;
+        }
+        let text = match std::str::from_utf8(unsafe { std::slice::from_raw_parts(data, len) }) {
+            Ok(t) => t.to_string(),
+            Err(_) => return, // chat is UTF-8; non-UTF-8 lines are dropped
+        };
+        if let Ok(guard) = s.state.lock() {
+            if let Some(ch) = &guard.channels {
+                let _ = ch.chat_out.try_send(rally_point_client::ChatOut {
+                    target_kind: 0, // 0 = all members
+                    target_slot: 0,
+                    text,
+                });
             }
         }
     }));
