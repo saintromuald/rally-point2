@@ -163,6 +163,8 @@ fn main() -> ExitCode {
             let mut cert_file: Option<String> = None;
             let mut client_key: Option<String> = None;
             let mut out_path: Option<String> = None;
+            let mut players: u32 = 0;
+            let mut game_name = "Relay".to_string();
             while let Some(a) = args.next() {
                 match a.as_str() {
                     "--tenant-pkcs8" => {
@@ -182,6 +184,8 @@ fn main() -> ExitCode {
                     "--client-key-pkcs8" => {
                         client_key = Some(next_arg(&mut args, "--client-key-pkcs8").unwrap())
                     }
+                    "--players" => players = next_arg(&mut args, "--players").unwrap().parse().unwrap(),
+                    "--name" => game_name = next_arg(&mut args, "--name").unwrap(),
                     "--out" => out_path = Some(next_arg(&mut args, "--out").unwrap()),
                     other => {
                         eprintln!("unknown flag {other}");
@@ -232,6 +236,8 @@ fn main() -> ExitCode {
                     "cert": cert_b64,
                 },
                 "initialBufferTurns": 2,
+                "rosterSize": players,
+                "gameName": game_name,
             });
             fs::write(&out_path, serde_json::to_string_pretty(&setup).unwrap())
                 .expect("writing setup");
