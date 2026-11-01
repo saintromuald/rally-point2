@@ -159,6 +159,9 @@ struct GameState {
     leave: LeaveTracker,
     local_slot: u32,
     initial_buffer: u32,
+    /// Per-slot turns the game has consumed (reported by rp_turn_consumed):
+    /// a synced leave's final_turn_count is compared against these.
+    consumed: [u64; 256],
 }
 
 /// A started session: the shared game state, the driver's health, the shutdown
@@ -209,6 +212,7 @@ pub unsafe extern "C" fn rp_start(setup_json: *const c_char, out: *mut *mut RpSe
             leave: LeaveTracker::new(),
             local_slot: creds.local_slot,
             initial_buffer: creds.initial_buffer,
+            consumed: [0; 256],
         }));
         let status = Arc::new(AtomicI32::new(RP_STAT_STARTING));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -527,7 +531,8 @@ pub unsafe extern "C" fn rp_poll(
                 Err(tmpsc::error::TryRecvError::Disconnected) => break,
             }
         }
-        for (slot, reason) in guard.leave.take_due(frame, |_| 0) {
+        let consumed = guard.consumed;
+        for (slot, reason) in guard.leave.take_due(frame, |s| consumed[s.0 as usize]) {
             w.u8(EV_LEAVE);
             w.u32(u32::from(slot.0));
             w.u32(reason);
@@ -763,6 +768,26 @@ pub extern "C" fn rp_end(session: *mut RpSession) {
         boxed.shutdown.store(true, Ordering::SeqCst);
         if let Some(thread) = boxed.thread {
             let _ = thread.join();
+        }
+    }));
+}
+
+/// Reports that the game consumed the count-th turn of a slot (a step's read).
+/// The bridge holds these per-slot counts so a synced leave's final_turn_count
+/// is compared against true consumption: the game stalls on the departed
+/// slot's last owed turn, and the leave surfaces exactly then.
+#[no_mangle]
+pub extern "C" fn rp_turn_consumed(session: *mut RpSession, slot: u32, count: u64) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if let Some(s) = unsafe { session.as_ref() } {
+            if let Ok(mut guard) = s.state.lock() {
+                if slot <= 255 {
+                    let at = slot as usize;
+                    if guard.consumed[at] < count {
+                        guard.consumed[at] = count;
+                    }
+                }
+            }
         }
     }));
 }

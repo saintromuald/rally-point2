@@ -76,6 +76,10 @@ int32_t rp_lobby_send(rp_session *session, const uint8_t *data, size_t len);
  * RP_EV_LEAVE event for that slot. */
 int32_t rp_request_drop(rp_session *session, uint32_t slot);
 
+/* Reports that the game consumed the count-th turn of a slot (a step's read);
+ * the bridge compares a synced leave's final_turn_count against these. */
+void rp_turn_consumed(rp_session *session, uint32_t slot, uint64_t count);
+
 /* Teardown (idempotent). */
 void rp_end(rp_session *session);
 
