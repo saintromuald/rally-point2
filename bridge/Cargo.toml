@@ -1,0 +1,26 @@
+[package]
+name = "rally-point-bridge"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["saintromuald"]
+repository = "https://github.com/saintromuald/rally-point2"
+description = """
+C ABI shim over rally-point-client: embeds ShieldBattery's netcode v2 turn
+transport in a non-Rust game engine (Hyperion). The game thread calls polled,
+never-blocking functions; one dedicated Tokio thread drives the QUIC link.
+"""
+
+[lib]
+name = "rally_point_bridge"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+rally-point-client = { path = "../client" }
+rally-point-transport = { path = "../transport" }
+tokio = { workspace = true }
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
