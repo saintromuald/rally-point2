@@ -1,0 +1,25 @@
+[package]
+name = "rp-dev-setup"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["saintromuald"]
+repository = "https://github.com/saintromuald/rally-point2"
+description = """
+Dev harness for rally-point-bridge: generates the relay's cert/key and tenant
+key, and mints per-slot launch setups. Not part of the shipped staticlib.
+"""
+
+[[bin]]
+name = "rp_dev_setup"
+path = "src/main.rs"
+
+[dependencies]
+rally-point-client = { path = "../client" }
+rally-point-transport = { path = "../transport" }
+rally-point-relay = { path = "../relay" }
+serde_json = "1"
+base64 = "0.22"
+ring = "0.17"
+hex = "0.4"

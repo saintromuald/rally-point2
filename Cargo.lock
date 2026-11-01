@@ -2697,6 +2697,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rally-point-bridge"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "rally-point-client",
+ "rally-point-transport",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "rally-point-client"
 version = "0.1.0"
 dependencies = [
@@ -2977,6 +2990,19 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rp-dev-setup"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "rally-point-client",
+ "rally-point-relay",
+ "rally-point-transport",
+ "ring",
+ "serde_json",
 ]
 
 [[package]]
